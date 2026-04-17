@@ -94,7 +94,7 @@ Resources:
         Fn::Transform:
           Name: AWS::Include
           Parameters:
-            Location: aws/api-gateway/swagger.yaml
+            Location: swagger.yaml
       Tags:
         - Key: Environment
           Value: !Ref Environment
