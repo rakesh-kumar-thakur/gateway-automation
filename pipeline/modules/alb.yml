@@ -1,0 +1,41 @@
+# ============================================================
+# ALB Module Manifest  (stub - ready to fill in)
+# ============================================================
+# Deploy order matters: ALB must deploy before ECS.
+# Files are processed alphabetically, so prefix with numbers
+# if strict ordering is needed: 01-alb.yml, 02-ecs.yml
+
+module:
+  name: alb
+  description: Application Load Balancer
+  enabled: false   # set to true when ready to deploy
+
+stack:
+  name: alb-stack
+  templatePath: aws/alb/template.yaml
+  capabilities:
+    - CAPABILITY_NAMED_IAM
+
+# No preDeploy script needed for ALB (no code generation)
+preDeploy: ~
+
+parameters:
+  - key: Environment
+    source: ssm
+    path: /pipeline/environment
+  - key: VpcId
+    source: ssm
+    path: /pipeline/vpc_id
+  - key: SubnetIds
+    source: ssm
+    path: /pipeline/subnet_ids
+
+tags:
+  - key: ManagedBy
+    value: CodePipeline
+  - key: Module
+    value: alb
+
+changePaths:
+  - aws/alb/**
+  - pipeline/modules/alb.yml

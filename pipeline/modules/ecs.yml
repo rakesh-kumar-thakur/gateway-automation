@@ -1,0 +1,39 @@
+# ============================================================
+# ECS Module Manifest  (stub - ready to fill in)
+# ============================================================
+# Depends on ALB stack output: imports AlbArn via CFN export.
+# Ensure alb.yml is deployed first.
+
+module:
+  name: ecs
+  description: ECS Cluster and Service
+  enabled: false   # set to true when ready to deploy
+
+stack:
+  name: ecs-stack
+  templatePath: aws/ecs/template.yaml
+  capabilities:
+    - CAPABILITY_NAMED_IAM
+
+preDeploy: ~
+
+parameters:
+  - key: Environment
+    source: ssm
+    path: /pipeline/environment
+  - key: ClusterName
+    source: ssm
+    path: /pipeline/ecs_cluster_name
+  - key: ContainerImage
+    source: ssm
+    path: /pipeline/ecs_container_image
+
+tags:
+  - key: ManagedBy
+    value: CodePipeline
+  - key: Module
+    value: ecs
+
+changePaths:
+  - aws/ecs/**
+  - pipeline/modules/ecs.yml

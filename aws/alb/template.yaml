@@ -1,0 +1,101 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Application Load Balancer (stub - ready to implement)
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC where ALB will be deployed
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Public subnets for ALB
+
+Resources:
+
+  # Security group for ALB
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${Environment}-alb-sg"
+      GroupDescription: Allow HTTP/HTTPS traffic to ALB
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Application Load Balancer
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${Environment}-alb"
+      Type: application
+      Scheme: internet-facing
+      IpAddressType: ipv4
+      Subnets: !Ref SubnetIds
+      SecurityGroups:
+        - !Ref AlbSecurityGroup
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Default target group (ECS will register here)
+  DefaultTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${Environment}-default-tg"
+      VpcId: !Ref VpcId
+      Protocol: HTTP
+      Port: 80
+      TargetType: ip
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # HTTP listener
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref DefaultTargetGroup
+
+Outputs:
+  AlbArn:
+    Description: ALB ARN (imported by ECS module)
+    Value: !Ref LoadBalancer
+    Export:
+      Name: !Sub "${Environment}-AlbArn"
+
+  AlbDnsName:
+    Description: ALB DNS name
+    Value: !GetAtt LoadBalancer.DNSName
+    Export:
+      Name: !Sub "${Environment}-AlbDnsName"
+
+  TargetGroupArn:
+    Description: Default target group ARN
+    Value: !Ref DefaultTargetGroup
+    Export:
+      Name: !Sub "${Environment}-DefaultTargetGroupArn"

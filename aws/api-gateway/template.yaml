@@ -1,0 +1,226 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Generic API Gateway stack.
+  Endpoints are defined in endpoints.yaml and injected at deploy time
+  by the pipeline via a Python pre-processing step (scripts/generate-cfn.py).
+  This template is the OUTPUT of that step - it is fully self-contained
+  and can be deployed standalone or via the pipeline.
+
+# ---------------------------------------------------------------------------
+# HOW GENERICS WORK HERE
+#
+# CloudFormation does not natively support loops, so the pipeline runs
+#   pipeline/scripts/generate_cfn.py
+# which reads endpoints.yaml and renders this template with all resources
+# expanded. The rendered file is what gets deployed.
+#
+# You never edit this template directly for endpoint changes.
+# Only edit aws/api-gateway/endpoints.yaml.
+# ---------------------------------------------------------------------------
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+
+  StageName:
+    Type: String
+    Default: v1
+
+  ApiName:
+    Type: String
+    Default: my-api
+    Description: Base name for the API Gateway
+
+Resources:
+
+  # ---- Shared IAM role for all Lambda functions ----
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${Environment}-${ApiName}-lambda-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ---- REST API ----
+  RestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub "${Environment}-${ApiName}"
+      Description: !Sub "REST API for ${Environment} - managed via CFT"
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ---- Deployment (depends on all methods - injected by generator) ----
+  # GENERATOR_DEPENDS_ON_PLACEHOLDER
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    # DependsOn list is injected by generate_cfn.py
+    Properties:
+      RestApiId: !Ref RestApi
+
+  # ---- Stage ----
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref RestApi
+      DeploymentId: !Ref ApiDeployment
+      StageName: !Ref StageName
+      Description: !Sub "${Environment} stage - ${StageName}"
+      MethodSettings:
+        - ResourcePath: "/*"
+          HttpMethod: "*"
+          ThrottlingBurstLimit: 200
+          ThrottlingRateLimit: 100
+          MetricsEnabled: true
+          LoggingLevel: INFO
+          DataTraceEnabled: false
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ====================================================================
+  # GENERATED RESOURCES BELOW - do not edit manually
+  # Run: python pipeline/scripts/generate_cfn.py to regenerate
+  # ====================================================================
+  # GENERATED_RESOURCES_START
+
+  # Lambda: hello-handler  (GET /hello)
+  LambdaHelloHandler:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${Environment}-hello-handler"
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {
+                  "statusCode": 200,
+                  "headers": {"Content-Type": "application/json"},
+                  "body": json.dumps({"message": "Hello from API Gateway!"})
+              }
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Endpoint
+          Value: GET /hello
+
+  ResourceHello:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: hello
+
+  MethodHelloGet:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ResourceHello
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub
+          - "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Fn}/invocations"
+          - Fn: !GetAtt LambdaHelloHandler.Arn
+
+  PermissionHelloGet:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt LambdaHelloHandler.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*/GET/hello"
+
+  # Lambda: data-handler  (POST /data)
+  LambdaDataHandler:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${Environment}-data-handler"
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              body = json.loads(event.get("body") or "{}")
+              return {
+                  "statusCode": 200,
+                  "headers": {"Content-Type": "application/json"},
+                  "body": json.dumps({"received": body, "status": "ok"})
+              }
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Endpoint
+          Value: POST /data
+
+  ResourceData:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: data
+
+  MethodDataPost:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ResourceData
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub
+          - "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Fn}/invocations"
+          - Fn: !GetAtt LambdaDataHandler.Arn
+
+  PermissionDataPost:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt LambdaDataHandler.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*/POST/data"
+
+  # GENERATED_RESOURCES_END
+
+Outputs:
+  ApiEndpoint:
+    Description: Base URL
+    Value: !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"
+    Export:
+      Name: !Sub "${Environment}-${ApiName}-Endpoint"
+
+  ApiId:
+    Description: REST API ID
+    Value: !Ref RestApi
+    Export:
+      Name: !Sub "${Environment}-${ApiName}-Id"

@@ -1,0 +1,56 @@
+version: 0.2
+
+# ============================================================
+# Generic pipeline orchestrator
+#
+# Behaviour:
+#   - If DEPLOY_MODULES env var is set (e.g. "api-gateway,alb"),
+#     only those modules are deployed. Use this for manual triggers.
+#   - Otherwise, git diff detects which aws/* paths changed and
+#     deploys only the affected modules automatically.
+#
+# To add a new module: drop a manifest in pipeline/modules/<name>.yml
+# and create aws/<name>/template.yaml. Nothing else changes here.
+# ============================================================
+
+env:
+  variables:
+    # Override at build-time to force specific modules:
+    # e.g. DEPLOY_MODULES=api-gateway  or  DEPLOY_MODULES=alb,ecs
+    DEPLOY_MODULES: ""
+  parameter-store:
+    ENVIRONMENT: "/pipeline/environment"
+    ARTIFACT_BUCKET: "/pipeline/artifact_bucket"
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - pip install cfn-lint pyyaml boto3 --quiet
+
+  pre_build:
+    commands:
+      - echo "==> Environment  : $ENVIRONMENT"
+      - echo "==> Artifact bucket : $ARTIFACT_BUCKET"
+      - |
+        if [ -n "$DEPLOY_MODULES" ]; then
+          echo "==> Manual override - deploying modules: $DEPLOY_MODULES"
+        else
+          echo "==> Auto-detecting changed modules from git diff..."
+        fi
+
+  build:
+    commands:
+      - |
+        if [ -n "$DEPLOY_MODULES" ]; then
+          python pipeline/scripts/deploy_module.py
+        else
+          python pipeline/scripts/deploy_module.py --changed-only
+        fi
+
+artifacts:
+  files:
+    - "**/*"
+  base-directory: /tmp
+  discard-paths: no

@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: ECS Cluster and Service (stub - ready to implement)
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+
+  ClusterName:
+    Type: String
+    Default: my-cluster
+
+  ContainerImage:
+    Type: String
+    Description: ECR image URI (e.g. 123456789.dkr.ecr.us-east-1.amazonaws.com/my-app:latest)
+
+Resources:
+
+  # ECS Cluster
+  EcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${Environment}-${ClusterName}"
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Task execution role
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${Environment}-ecs-task-execution-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  # Task definition
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${Environment}-${ClusterName}-task"
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: "256"
+      Memory: "512"
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: app
+          Image: !Ref ContainerImage
+          PortMappings:
+            - ContainerPort: 80
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Sub "/ecs/${Environment}-${ClusterName}"
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: app
+
+  # ECS Service - imports ALB target group from alb module
+  EcsService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub "${Environment}-${ClusterName}-service"
+      Cluster: !Ref EcsCluster
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      LoadBalancers:
+        - ContainerName: app
+          ContainerPort: 80
+          TargetGroupArn: !ImportValue
+            Fn::Sub: "${Environment}-DefaultTargetGroupArn"   # exported by alb module
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  ClusterArn:
+    Value: !GetAtt EcsCluster.Arn
+    Export:
+      Name: !Sub "${Environment}-EcsClusterArn"
+
+  ServiceName:
+    Value: !GetAtt EcsService.Name
+    Export:
+      Name: !Sub "${Environment}-EcsServiceName"

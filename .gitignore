@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Packaged CFT artifacts (generated at build time, never commit these)
+/tmp/
+packaged-*.yaml
+
+# AWS credentials - never commit
+.aws/
+credentials
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
