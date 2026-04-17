@@ -59,8 +59,10 @@ Resources:
       EventPattern:
         source:
           - aws.codeconnections
+          - aws.codestar-connections
         detail-type:
           - CodeConnections Repository State Change
+          - CodeStarConnections Repository State Change
         detail:
           event:
             - referenceUpdated
