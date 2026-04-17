@@ -193,6 +193,14 @@ Resources:
                   - codestar-connections:UseConnection
                   - codeconnections:UseConnection
                 Resource: !Ref GitHubConnectionArn
+              - Effect: Allow
+                Action:
+                  - events:PutRule
+                  - events:PutTargets
+                  - events:DeleteRule
+                  - events:RemoveTargets
+                  - events:DescribeRule
+                Resource: !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/*"
 
   # ── CodeBuild project ────────────────────────────────────────────────────
   CodeBuildProject:
