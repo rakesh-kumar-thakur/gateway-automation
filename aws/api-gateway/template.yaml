@@ -75,7 +75,9 @@ Resources:
 
   ApiDeployment:
     Type: AWS::ApiGateway::Deployment
-    # DependsOn list is injected by generate_cfn.py
+    DependsOn:
+      - MethodHelloGet
+      - MethodDataPost
     Properties:
       RestApiId: !Ref RestApi
 

@@ -152,11 +152,12 @@ def main():
               file=sys.stderr)
         sys.exit(1)
 
-    # Inject DependsOn into ApiDeployment
+    # Inject/replace DependsOn into ApiDeployment (handles both first-run and re-run)
     depends_str = '\n'.join(f'      - {d}' for d in depends_on)
     new_template = re.sub(
-        r'(  ApiDeployment:\n    Type: AWS::ApiGateway::Deployment\n)    # DependsOn list is injected by generate_cfn\.py',
-        f'\\1    DependsOn:\n{depends_str}',
+        r'(  ApiDeployment:\n    Type: AWS::ApiGateway::Deployment\n)'
+        r'(?:    # DependsOn list is injected by generate_cfn\.py|    DependsOn:\n(?:      - \S+\n)*)',
+        f'\\1    DependsOn:\n{depends_str}\n',
         new_template
     )
 
