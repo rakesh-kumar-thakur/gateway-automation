@@ -27,7 +27,7 @@ Endpoints:
           return {
               "statusCode": 200,
               "headers": {"Content-Type": "application/json"},
-              "body": json.dumps({"message": "Hello from API GTw R+S"})
+              "body": json.dumps({"message": "Hello World - form Automation"})
           }
 
   - path: data
