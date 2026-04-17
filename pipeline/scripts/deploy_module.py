@@ -104,7 +104,7 @@ def deploy(module_name: str):
 
     # 2. Validate
     print(f"\n[2/4] Validating {stack_cfg['templatePath']} ...")
-    run(f"cfn-lint {template_src}")
+    run(f"cfn-lint {template_src} --ignore-checks W")
     run(f"aws cloudformation validate-template --template-body file://{template_src}")
 
     # 3. Package

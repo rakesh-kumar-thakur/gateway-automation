@@ -37,7 +37,7 @@ def indent(text: str, spaces: int) -> str:
 
 # ── Resource block builders ───────────────────────────────────────────────────
 
-def lambda_resource(ep: dict, env_param: str = "!Ref Environment") -> str:
+def lambda_resource(ep: dict) -> str:
     p       = pascal(ep['path'])
     desc    = ep['description']
     runtime = ep['runtime']
@@ -50,7 +50,7 @@ def lambda_resource(ep: dict, env_param: str = "!Ref Environment") -> str:
   Lambda{p}:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub "${{{env_param}}}-{desc}"
+      FunctionName: !Sub "${{Environment}}-{desc}"
       Runtime: {runtime}
       Handler: {handler}
       Role: !GetAtt LambdaExecutionRole.Arn
