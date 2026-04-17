@@ -236,6 +236,54 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
+  # ── IAM: EventBridge → CodePipeline ─────────────────────────────────────
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${Environment}-eventbridge-pipeline-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartPipelineExecution
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: codepipeline:StartPipelineExecution
+                Resource: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${Environment}-infra-pipeline"
+
+  # ── EventBridge rule: GitHub push on tracked branch → trigger pipeline ───
+  PipelineTriggerRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${Environment}-infra-pipeline-trigger"
+      Description: Triggers the infra pipeline on push to the tracked branch
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.codeconnections
+        detail-type:
+          - CodeConnections Repository State Change
+        detail:
+          event:
+            - referenceUpdated
+            - referenceCreated
+          referenceName:
+            - !Ref GitHubBranch
+          referenceType:
+            - branch
+          repositoryName:
+            - !Ref GitHubRepo
+      Targets:
+        - Id: TriggerPipeline
+          Arn: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${Environment}-infra-pipeline"
+          RoleArn: !GetAtt EventBridgeRole.Arn
+
   # ── CodePipeline ─────────────────────────────────────────────────────────
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
