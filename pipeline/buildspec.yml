@@ -1,25 +1,9 @@
 version: 0.2
 
-# ============================================================
-# Generic pipeline orchestrator
-#
-# Behaviour:
-#   - If DEPLOY_MODULES env var is set (e.g. "api-gateway,alb"),
-#     only those modules are deployed. Use this for manual triggers.
-#   - Otherwise, git diff detects which aws/* paths changed and
-#     deploys only the affected modules automatically.
-#
-# To add a new module: drop a manifest in pipeline/modules/<name>.yml
-# and create aws/<name>/template.yaml. Nothing else changes here.
-# ============================================================
-
 env:
   variables:
-    # Injected by CodePipeline CFT via CodeBuild environment variables
     ENVIRONMENT: "dev"
     ARTIFACT_BUCKET: ""
-    # Override at build-time to force specific modules:
-    # e.g. DEPLOY_MODULES=api-gateway  or  DEPLOY_MODULES=alb,ecs
     DEPLOY_MODULES: ""
 
 phases:
@@ -33,16 +17,11 @@ phases:
     commands:
       - echo "==> Environment     $ENVIRONMENT"
       - echo "==> Artifact bucket $ARTIFACT_BUCKET"
-      - echo "==> Deploy modules  ${DEPLOY_MODULES:-auto-detect}"
+      - echo "==> Deploy modules  ${DEPLOY_MODULES:-all enabled}"
 
   build:
     commands:
-      - |
-        if [ -n "$DEPLOY_MODULES" ]; then
-          python pipeline/scripts/deploy_module.py
-        else
-          python pipeline/scripts/deploy_module.py --changed-only
-        fi
+      - python pipeline/scripts/deploy_module.py
 
 artifacts:
   files:
