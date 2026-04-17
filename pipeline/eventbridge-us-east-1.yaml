@@ -1,0 +1,83 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  EventBridge rule in us-east-1 to trigger CodePipeline in ap-south-1.
+  Must be deployed in us-east-1 because aws.codeconnections events
+  are only published in us-east-1 regardless of where the pipeline lives.
+
+Parameters:
+  GitHubRepo:
+    Type: String
+    Description: GitHub repository name (e.g. gateway-automation)
+
+  GitHubBranch:
+    Type: String
+    Default: master
+
+  PipelineName:
+    Type: String
+    Description: Name of the CodePipeline in ap-south-1 (e.g. dev-infra-pipeline)
+
+  PipelineRegion:
+    Type: String
+    Default: ap-south-1
+    Description: Region where CodePipeline is deployed
+
+  PipelineAccountId:
+    Type: String
+    Description: AWS Account ID where CodePipeline is deployed
+
+Resources:
+
+  # IAM role allowing EventBridge in us-east-1 to start pipeline in ap-south-1
+  EventBridgeCrossRegionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "eventbridge-trigger-${PipelineName}-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartPipelineExecution
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: codepipeline:StartPipelineExecution
+                Resource: !Sub "arn:aws:codepipeline:${PipelineRegion}:${PipelineAccountId}:${PipelineName}"
+
+  # EventBridge rule in us-east-1 watching for GitHub pushes
+  GitHubPushRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "trigger-${PipelineName}-on-push"
+      Description: !Sub "Triggers ${PipelineName} on push to ${GitHubBranch}"
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.codeconnections
+        detail-type:
+          - CodeConnections Repository State Change
+        detail:
+          event:
+            - referenceUpdated
+            - referenceCreated
+          referenceType:
+            - branch
+          referenceName:
+            - !Ref GitHubBranch
+          repositoryName:
+            - !Ref GitHubRepo
+      Targets:
+        - Id: TriggerPipeline
+          Arn: !Sub "arn:aws:codepipeline:${PipelineRegion}:${PipelineAccountId}:${PipelineName}"
+          RoleArn: !GetAtt EventBridgeCrossRegionRole.Arn
+
+Outputs:
+  RuleName:
+    Value: !Ref GitHubPushRule
+  RuleArn:
+    Value: !GetAtt GitHubPushRule.Arn
