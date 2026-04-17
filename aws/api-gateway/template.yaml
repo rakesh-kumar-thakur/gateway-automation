@@ -18,15 +18,6 @@ Parameters:
     Type: String
     Default: my-api
 
-  SwaggerS3Bucket:
-    Type: String
-    Description: S3 bucket where swagger.yaml is uploaded by cloudformation package
-
-  SwaggerS3Key:
-    Type: String
-    Description: S3 key of the uploaded swagger.yaml
-    Default: swagger/swagger.yaml
-
 Resources:
 
   # ── Shared Lambda execution role ─────────────────────────────────────────
@@ -90,7 +81,7 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
-  # ── REST API - imports swagger.yaml from S3 via AWS::Include ─────────────
+  # ── REST API - imports swagger.yaml (cloudformation package uploads it to S3) ──
   RestApi:
     Type: AWS::ApiGateway::RestApi
     Properties:
@@ -103,7 +94,7 @@ Resources:
         Fn::Transform:
           Name: AWS::Include
           Parameters:
-            Location: !Sub "s3://${SwaggerS3Bucket}/${SwaggerS3Key}"
+            Location: aws/api-gateway/swagger.yaml
       Tags:
         - Key: Environment
           Value: !Ref Environment
