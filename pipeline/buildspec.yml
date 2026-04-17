@@ -4,26 +4,52 @@ env:
   variables:
     ENVIRONMENT: "dev"
     ARTIFACT_BUCKET: ""
-    DEPLOY_MODULES: ""
+    STACK_NAME: "api-gateway-stack"
+    TEMPLATE_FILE: "aws/api-gateway/template.yaml"
 
 phases:
   install:
     runtime-versions:
       python: 3.12
     commands:
-      - pip install cfn-lint pyyaml boto3 --quiet
+      - pip install cfn-lint --quiet
 
   pre_build:
     commands:
-      - echo "==> Environment     $ENVIRONMENT"
-      - echo "==> Artifact bucket $ARTIFACT_BUCKET"
-      - echo "==> Deploy modules  ${DEPLOY_MODULES:-all enabled}"
+      - echo "==> Environment $ENVIRONMENT"
+      - echo "==> Validating CloudFormation template..."
+      - cfn-lint $TEMPLATE_FILE --ignore-checks W
 
   build:
     commands:
-      - python pipeline/scripts/deploy_module.py
+      - echo "==> Packaging template (uploads swagger.yaml to S3)..."
+      - |
+        aws cloudformation package \
+          --template-file $TEMPLATE_FILE \
+          --s3-bucket $ARTIFACT_BUCKET \
+          --s3-prefix swagger \
+          --output-template-file /tmp/packaged.yaml
+
+  post_build:
+    commands:
+      - echo "==> Deploying stack $STACK_NAME..."
+      - |
+        aws cloudformation deploy \
+          --template-file /tmp/packaged.yaml \
+          --stack-name $STACK_NAME \
+          --parameter-overrides \
+              Environment=$ENVIRONMENT \
+              StageName=v1 \
+              ApiName=my-api \
+              SwaggerS3Bucket=$ARTIFACT_BUCKET \
+              SwaggerS3Key=swagger/swagger.yaml \
+          --capabilities CAPABILITY_NAMED_IAM \
+          --no-fail-on-empty-changeset \
+          --tags Environment=$ENVIRONMENT ManagedBy=CodePipeline
+      - echo "==> Deployment complete. Fetching outputs..."
+      - aws cloudformation describe-stacks --stack-name $STACK_NAME --query "Stacks[0].Outputs" --output table
 
 artifacts:
   files:
-    - "**/*"
-  discard-paths: no
+    - /tmp/packaged.yaml
+  discard-paths: yes

@@ -1,45 +1,18 @@
 # ============================================================
 # API Gateway Module Manifest
+# Informational only - buildspec.yml handles the actual deploy.
 # ============================================================
-# This file defines how the api-gateway module is built and deployed.
-# The pipeline reads this manifest and executes each step.
 
 module:
   name: api-gateway
-  description: REST API Gateway with Lambda backends
-  
+  description: REST API Gateway - endpoints defined in swagger.yaml
+  enabled: true
+
 stack:
   name: api-gateway-stack
   templatePath: aws/api-gateway/template.yaml
-  capabilities:
-    - CAPABILITY_NAMED_IAM
-  
-# Pre-deploy hook: runs before validation/packaging
-preDeploy:
-  script: python pipeline/scripts/generate_cfn.py
-  description: Generate CFT from endpoints.yaml
 
-# Parameters passed to CloudFormation deploy
-parameters:
-  - key: Environment
-    source: ssm
-    path: /pipeline/environment
-  - key: StageName
-    source: ssm
-    path: /pipeline/stage_name
-  - key: ApiName
-    source: ssm
-    path: /pipeline/api_name
-
-# Tags applied to the stack
-tags:
-  - key: ManagedBy
-    value: CodePipeline
-  - key: Module
-    value: api-gateway
-
-# Change detection: which paths trigger this module
-changePaths:
-  - aws/api-gateway/**
-  - pipeline/modules/api-gateway.yml
-  - pipeline/scripts/generate_cfn.py
+# To add a new endpoint:
+#   1. Edit aws/api-gateway/swagger.yaml
+#   2. Push to master
+#   3. Pipeline auto-triggers and deploys

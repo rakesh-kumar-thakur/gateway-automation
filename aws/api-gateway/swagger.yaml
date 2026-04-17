@@ -1,0 +1,64 @@
+openapi: "3.0.1"
+info:
+  title: "my-api"
+  description: "REST API - add endpoints here, pipeline deploys automatically"
+  version: "1.0"
+
+# ============================================================
+# To add a new endpoint:
+#   1. Add a new path block below following the same pattern
+#   2. Add the x-amazon-apigateway-integration block pointing to your Lambda
+#   3. Push to master - pipeline handles the rest
+# ============================================================
+
+paths:
+
+  /hello:
+    get:
+      summary: Hello endpoint
+      operationId: getHello
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+      x-amazon-apigateway-integration:
+        type: aws_proxy
+        httpMethod: POST
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaHello.Arn}/invocations"
+        passthroughBehavior: when_no_match
+
+  /data:
+    post:
+      summary: Data endpoint
+      operationId: postData
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received:
+                    type: object
+                  status:
+                    type: string
+      x-amazon-apigateway-integration:
+        type: aws_proxy
+        httpMethod: POST
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaData.Arn}/invocations"
+        passthroughBehavior: when_no_match

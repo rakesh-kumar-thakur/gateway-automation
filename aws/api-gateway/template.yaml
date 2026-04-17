@@ -1,27 +1,13 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Generic API Gateway stack.
-  Endpoints are defined in endpoints.yaml and injected at deploy time
-  by the pipeline via a Python pre-processing step (scripts/generate-cfn.py).
-  This template is the OUTPUT of that step - it is fully self-contained
-  and can be deployed standalone or via the pipeline.
-
-# ---------------------------------------------------------------------------
-# HOW GENERICS WORK HERE
-#
-# CloudFormation does not natively support loops, so the pipeline runs
-#   pipeline/scripts/generate_cfn.py
-# which reads endpoints.yaml and renders this template with all resources
-# expanded. The rendered file is what gets deployed.
-#
-# You never edit this template directly for endpoint changes.
-# Only edit aws/api-gateway/endpoints.yaml.
-# ---------------------------------------------------------------------------
+  API Gateway stack. Endpoints are defined in swagger.yaml.
+  To add endpoints: edit swagger.yaml and push to master.
+  No scripts, no code generation - pure CloudFormation.
 
 Parameters:
   Environment:
     Type: String
-    Default: prod
+    Default: dev
     AllowedValues: [dev, staging, prod]
 
   StageName:
@@ -31,11 +17,19 @@ Parameters:
   ApiName:
     Type: String
     Default: my-api
-    Description: Base name for the API Gateway
+
+  SwaggerS3Bucket:
+    Type: String
+    Description: S3 bucket where swagger.yaml is uploaded by cloudformation package
+
+  SwaggerS3Key:
+    Type: String
+    Description: S3 key of the uploaded swagger.yaml
+    Default: swagger/swagger.yaml
 
 Resources:
 
-  # ---- Shared IAM role for all Lambda functions ----
+  # ── Shared Lambda execution role ─────────────────────────────────────────
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -52,63 +46,9 @@ Resources:
       Tags:
         - Key: Environment
           Value: !Ref Environment
-        - Key: ManagedBy
-          Value: CloudFormation
 
-  # ---- REST API ----
-  RestApi:
-    Type: AWS::ApiGateway::RestApi
-    Properties:
-      Name: !Sub "${Environment}-${ApiName}"
-      Description: !Sub "REST API for ${Environment} - managed via CFT"
-      EndpointConfiguration:
-        Types:
-          - REGIONAL
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
-        - Key: ManagedBy
-          Value: CloudFormation
-
-  # ---- Deployment (depends on all methods - injected by generator) ----
-  # GENERATOR_DEPENDS_ON_PLACEHOLDER
-
-  ApiDeployment:
-    Type: AWS::ApiGateway::Deployment
-    DependsOn:
-      - MethodHelloGet
-      - MethodDataPost
-    Properties:
-      RestApiId: !Ref RestApi
-
-  # ---- Stage ----
-  ApiStage:
-    Type: AWS::ApiGateway::Stage
-    Properties:
-      RestApiId: !Ref RestApi
-      DeploymentId: !Ref ApiDeployment
-      StageName: !Ref StageName
-      Description: !Sub "${Environment} stage - ${StageName}"
-      MethodSettings:
-        - ResourcePath: "/*"
-          HttpMethod: "*"
-          ThrottlingBurstLimit: 200
-          ThrottlingRateLimit: 100
-          MetricsEnabled: true
-          LoggingLevel: INFO
-          DataTraceEnabled: false
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
-
-  # ====================================================================
-  # GENERATED RESOURCES BELOW - do not edit manually
-  # Run: python pipeline/scripts/generate_cfn.py to regenerate
-  # ====================================================================
-  # GENERATED_RESOURCES_START
-
-  # Lambda: hello-handler  (GET /hello)
-  LambdaHelloHandler:
+  # ── Lambda: GET /hello ───────────────────────────────────────────────────
+  LambdaHello:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub "${Environment}-hello-handler"
@@ -127,40 +67,9 @@ Resources:
       Tags:
         - Key: Environment
           Value: !Ref Environment
-        - Key: Endpoint
-          Value: GET /hello
 
-  ResourceHello:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref RestApi
-      ParentId: !GetAtt RestApi.RootResourceId
-      PathPart: hello
-
-  MethodHelloGet:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref RestApi
-      ResourceId: !Ref ResourceHello
-      HttpMethod: GET
-      AuthorizationType: NONE
-      Integration:
-        Type: AWS_PROXY
-        IntegrationHttpMethod: POST
-        Uri: !Sub
-          - "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Fn}/invocations"
-          - Fn: !GetAtt LambdaHelloHandler.Arn
-
-  PermissionHelloGet:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !GetAtt LambdaHelloHandler.Arn
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*/GET/hello"
-
-  # Lambda: data-handler  (POST /data)
-  LambdaDataHandler:
+  # ── Lambda: POST /data ───────────────────────────────────────────────────
+  LambdaData:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub "${Environment}-data-handler"
@@ -180,39 +89,66 @@ Resources:
       Tags:
         - Key: Environment
           Value: !Ref Environment
-        - Key: Endpoint
-          Value: POST /data
 
-  ResourceData:
-    Type: AWS::ApiGateway::Resource
+  # ── REST API - imports swagger.yaml from S3 via AWS::Include ─────────────
+  RestApi:
+    Type: AWS::ApiGateway::RestApi
     Properties:
-      RestApiId: !Ref RestApi
-      ParentId: !GetAtt RestApi.RootResourceId
-      PathPart: data
+      Name: !Sub "${Environment}-${ApiName}"
+      Description: !Sub "REST API for ${Environment}"
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Body:
+        Fn::Transform:
+          Name: AWS::Include
+          Parameters:
+            Location: !Sub "s3://${SwaggerS3Bucket}/${SwaggerS3Key}"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
 
-  MethodDataPost:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref RestApi
-      ResourceId: !Ref ResourceData
-      HttpMethod: POST
-      AuthorizationType: NONE
-      Integration:
-        Type: AWS_PROXY
-        IntegrationHttpMethod: POST
-        Uri: !Sub
-          - "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Fn}/invocations"
-          - Fn: !GetAtt LambdaDataHandler.Arn
-
-  PermissionDataPost:
+  # ── Lambda permissions for API Gateway ───────────────────────────────────
+  LambdaHelloPermission:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !GetAtt LambdaDataHandler.Arn
+      FunctionName: !GetAtt LambdaHello.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*/GET/hello"
+
+  LambdaDataPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt LambdaData.Arn
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*/POST/data"
 
-  # GENERATED_RESOURCES_END
+  # ── Deployment ────────────────────────────────────────────────────────────
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      RestApiId: !Ref RestApi
+
+  # ── Stage ─────────────────────────────────────────────────────────────────
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref RestApi
+      DeploymentId: !Ref ApiDeployment
+      StageName: !Ref StageName
+      MethodSettings:
+        - ResourcePath: "/*"
+          HttpMethod: "*"
+          ThrottlingBurstLimit: 200
+          ThrottlingRateLimit: 100
+          MetricsEnabled: true
+          LoggingLevel: INFO
+          DataTraceEnabled: false
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
 
 Outputs:
   ApiEndpoint:
@@ -222,7 +158,6 @@ Outputs:
       Name: !Sub "${Environment}-${ApiName}-Endpoint"
 
   ApiId:
-    Description: REST API ID
     Value: !Ref RestApi
     Export:
       Name: !Sub "${Environment}-${ApiName}-Id"
