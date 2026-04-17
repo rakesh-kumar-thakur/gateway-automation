@@ -33,9 +33,9 @@ paths:
         uri:
           Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaHello.Arn}/invocations"
         passthroughBehavior: when_no_match
-  /helloRK:
+  /helloJi:
     get:
-      summary: Hello endpoint
+      summary: Hello endpoint added for chagne
       operationId: getHelloRakeshJi
       responses:
         "200":
