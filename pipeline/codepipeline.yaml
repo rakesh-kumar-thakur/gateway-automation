@@ -71,6 +71,7 @@ Resources:
       Name: /pipeline/artifact_bucket
       Type: String
       Value: !Ref ArtifactBucket
+      Description: "Kept for reference - value is injected directly into CodeBuild env vars"
 
   # api-gateway module params
   SSMApiStageName:
@@ -207,6 +208,10 @@ Resources:
         ComputeType: BUILD_GENERAL1_SMALL
         Image: aws/codebuild/standard:7.0
         EnvironmentVariables:
+          - Name: ENVIRONMENT
+            Value: !Ref Environment
+          - Name: ARTIFACT_BUCKET
+            Value: !Ref ArtifactBucket
           # Leave empty by default - set at build-time to force a specific module
           - Name: DEPLOY_MODULES
             Value: ""

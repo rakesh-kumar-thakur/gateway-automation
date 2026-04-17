@@ -15,12 +15,12 @@ version: 0.2
 
 env:
   variables:
+    # Injected by CodePipeline CFT via CodeBuild environment variables
+    ENVIRONMENT: "dev"
+    ARTIFACT_BUCKET: ""
     # Override at build-time to force specific modules:
     # e.g. DEPLOY_MODULES=api-gateway  or  DEPLOY_MODULES=alb,ecs
     DEPLOY_MODULES: ""
-  parameter-store:
-    ENVIRONMENT: "/pipeline/environment"
-    ARTIFACT_BUCKET: "/pipeline/artifact_bucket"
 
 phases:
   install:
@@ -31,14 +31,9 @@ phases:
 
   pre_build:
     commands:
-      - echo "==> Environment  : $ENVIRONMENT"
-      - echo "==> Artifact bucket : $ARTIFACT_BUCKET"
-      - |
-        if [ -n "$DEPLOY_MODULES" ]; then
-          echo "==> Manual override - deploying modules: $DEPLOY_MODULES"
-        else
-          echo "==> Auto-detecting changed modules from git diff..."
-        fi
+      - echo "==> Environment     $ENVIRONMENT"
+      - echo "==> Artifact bucket $ARTIFACT_BUCKET"
+      - echo "==> Deploy modules  ${DEPLOY_MODULES:-auto-detect}"
 
   build:
     commands:
@@ -52,5 +47,4 @@ phases:
 artifacts:
   files:
     - "**/*"
-  base-directory: /tmp
   discard-paths: no
