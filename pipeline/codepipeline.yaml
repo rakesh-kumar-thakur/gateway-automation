@@ -189,7 +189,9 @@ Resources:
                 Action: [codebuild:BatchGetBuilds, codebuild:StartBuild]
                 Resource: !GetAtt CodeBuildProject.Arn
               - Effect: Allow
-                Action: codestar-connections:UseConnection
+                Action:
+                  - codestar-connections:UseConnection
+                  - codeconnections:UseConnection
                 Resource: !Ref GitHubConnectionArn
 
   # ── CodeBuild project ────────────────────────────────────────────────────
