@@ -324,54 +324,6 @@ Resources:
                   - codeconnections:UseConnection
                 Resource: !Ref GitHubConnectionArn
 
-  # ── IAM: EventBridge → CodePipeline ─────────────────────────────────────
-  EventBridgeRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: dev-eventbridge-pipeline-role
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: events.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: StartPipelineExecution
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: codepipeline:StartPipelineExecution
-                Resource: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:dev-infra-pipeline"
-
-  # ── EventBridge rule: GitHub push → trigger pipeline ────────────────────
-  PipelineTriggerRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: dev-infra-pipeline-trigger
-      Description: Triggers dev pipeline on push to develop branch
-      State: ENABLED
-      EventPattern:
-        source:
-          - aws.codeconnections
-        detail-type:
-          - CodeConnections Repository State Change
-        detail:
-          event:
-            - referenceUpdated
-            - referenceCreated
-          referenceName:
-            - !Ref GitHubBranch
-          referenceType:
-            - branch
-          repositoryName:
-            - !Ref GitHubRepo
-      Targets:
-        - Id: TriggerPipeline
-          Arn: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:dev-infra-pipeline"
-          RoleArn: !GetAtt EventBridgeRole.Arn
-
   # ── CodePipeline ─────────────────────────────────────────────────────────
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
@@ -396,7 +348,7 @@ Resources:
                 FullRepositoryId: !Sub "${GitHubOwner}/${GitHubRepo}"
                 BranchName: !Ref GitHubBranch
                 OutputArtifactFormat: CODE_ZIP
-                DetectChanges: false
+                DetectChanges: true
               OutputArtifacts:
                 - Name: SourceArtifact
 
