@@ -324,6 +324,140 @@ Resources:
                   - codeconnections:UseConnection
                 Resource: !Ref GitHubConnectionArn
 
+  # ── IAM: Lambda Polling Function ─────────────────────────────────────────
+  PollLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: dev-pipeline-poll-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: PipelineTriggerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codepipeline:StartPipelineExecution
+                  - codepipeline:GetPipelineState
+                  - codepipeline:ListPipelineExecutions
+                Resource: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${Pipeline}"
+
+  # ── Lambda: Poll for Changes ──────────────────────────────────────────────
+  PollLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: dev-pipeline-poll-trigger
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt PollLambdaRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          PIPELINE_NAME: !Ref Pipeline
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          
+          codepipeline = boto3.client('codepipeline')
+          
+          def lambda_handler(event, context):
+              try:
+                  pipeline_name = os.environ['PIPELINE_NAME']
+                  
+                  # Get pipeline state
+                  pipeline_state = codepipeline.get_pipeline_state(name=pipeline_name)
+                  
+                  # Check if pipeline is currently running
+                  for stage in pipeline_state['stageStates']:
+                      if stage.get('latestExecution', {}).get('status') == 'InProgress':
+                          print("Pipeline already running, skipping trigger")
+                          return {'statusCode': 200, 'body': 'Pipeline running'}
+                  
+                  # Get latest execution to check last commit
+                  executions = codepipeline.list_pipeline_executions(
+                      pipelineName=pipeline_name,
+                      maxResults=1
+                  )
+                  
+                  if executions['pipelineExecutionSummaries']:
+                      last_execution = executions['pipelineExecutionSummaries'][0]
+                      last_commit = None
+                      if last_execution.get('sourceRevisions'):
+                          last_commit = last_execution['sourceRevisions'][0]['revisionId']
+                      
+                      # Get current source revision
+                      source_stage = pipeline_state['stageStates'][0]
+                      current_commit = None
+                      if source_stage['stageName'] == 'Source':
+                          for action in source_stage.get('actionStates', []):
+                              if action['actionName'] == 'GitHubSource':
+                                  current_rev = action.get('currentRevision', {})
+                                  if current_rev:
+                                      current_commit = current_rev.get('revisionId')
+                      
+                      # Only trigger if commits are different
+                      if current_commit and last_commit and current_commit != last_commit:
+                          response = codepipeline.start_pipeline_execution(name=pipeline_name)
+                          print(f"New commit detected: {current_commit}, triggering pipeline: {response['pipelineExecutionId']}")
+                          return {
+                              'statusCode': 200,
+                              'body': json.dumps({
+                                  'message': 'Pipeline triggered - new commit detected',
+                                  'executionId': response['pipelineExecutionId'],
+                                  'newCommit': current_commit,
+                                  'oldCommit': last_commit
+                              })
+                          }
+                      else:
+                          print(f"No new commits. Current: {current_commit}, Last: {last_commit}")
+                          return {'statusCode': 200, 'body': 'No new commits'}
+                  
+                  # First run - trigger pipeline
+                  response = codepipeline.start_pipeline_execution(name=pipeline_name)
+                  print(f"First run - Pipeline triggered: {response['pipelineExecutionId']}")
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps({
+                          'message': 'Pipeline triggered - first run',
+                          'executionId': response['pipelineExecutionId']
+                      })
+                  }
+                  
+              except Exception as e:
+                  print(f'Error: {str(e)}')
+                  return {'statusCode': 500, 'body': json.dumps({'error': str(e)})}
+
+  # ── EventBridge: Schedule Poll Every 2 Minutes ────────────────────────────
+  PollScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: dev-pipeline-poll-schedule
+      Description: Polls for changes and triggers pipeline every 2 minutes
+      ScheduleExpression: rate(2 minutes)
+      State: ENABLED
+      Targets:
+        - Id: PollLambdaTarget
+          Arn: !GetAtt PollLambdaFunction.Arn
+
+  # ── Lambda Permission for EventBridge ─────────────────────────────────────
+  PollLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PollLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt PollScheduleRule.Arn
+
   # ── IAM: EventBridge → CodePipeline ─────────────────────────────────────
   EventBridgeRole:
     Type: AWS::IAM::Role
