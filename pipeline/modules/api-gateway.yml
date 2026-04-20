@@ -17,14 +17,14 @@ preDeploy: ~
 
 parameters:
   - key: Environment
-    source: ssm
-    path: /pipeline/{env}/environment
+    source: value
+    value: dev
   - key: StageName
-    source: ssm
-    path: /pipeline/{env}/stage_name
+    source: value
+    value: dev
   - key: ApiName
-    source: ssm
-    path: /pipeline/{env}/api_name
+    source: value
+    value: dev-api-gateway
 
 tags:
   - key: ManagedBy
