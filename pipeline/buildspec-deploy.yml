@@ -272,9 +272,9 @@ phases:
       - echo "==> Deployment phase complete"
       - |
         if [ $CODEBUILD_BUILD_SUCCEEDING -eq 1 ]; then
-          echo "✓ All deployments successful"
+          echo "SUCCESS: All deployments successful"
         else
-          echo "✗ Deployment failed"
+          echo "ERROR: Deployment failed"
           exit 1
         fi
 
