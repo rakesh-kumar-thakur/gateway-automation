@@ -53,6 +53,26 @@ paths:
         uri:
           Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaHello.Arn}/invocations"
         passthroughBehavior: when_no_match
+  /new-end-point:
+    get:
+      summary: Hello endpoint added for chagne
+      operationId: getHelloRakeshJi
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+      x-amazon-apigateway-integration:
+        type: aws_proxy
+        httpMethod: POST
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaHello.Arn}/invocations"
+        passthroughBehavior: when_no_match      
   /test-files:
     post:
       summary: Data endpoint
