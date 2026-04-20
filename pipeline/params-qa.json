@@ -1,0 +1,8 @@
+[
+  { "ParameterKey": "GitHubOwner",         "ParameterValue": "rakesh-kumar-thakur" },
+  { "ParameterKey": "GitHubRepo",          "ParameterValue": "gateway-automation" },
+  { "ParameterKey": "GitHubBranch",        "ParameterValue": "qa" },
+  { "ParameterKey": "GitHubConnectionArn", "ParameterValue": "arn:aws:codeconnections:ap-south-1:381492219337:connection/7a96c5e3-3fe4-443e-99c3-881818fa83c4" },
+  { "ParameterKey": "ApiStageName",        "ParameterValue": "qa" },
+  { "ParameterKey": "ApiName",             "ParameterValue": "qa-api-gateway" }
+]

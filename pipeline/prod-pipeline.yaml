@@ -1,0 +1,551 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Production Environment Pipeline - ap-south-1
+  Auto-detects changed modules and deploys only those.
+  Includes MANUAL APPROVAL gate before deployment and automated testing stages.
+
+Parameters:
+  GitHubOwner:
+    Type: String
+    Description: GitHub repository owner
+  GitHubRepo:
+    Type: String
+    Description: GitHub repository name
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: Branch to track for production environment
+  GitHubConnectionArn:
+    Type: String
+    Description: ARN of the CodeStar Connection to GitHub
+  
+  # Module-level parameters
+  ApiStageName:
+    Type: String
+    Default: prod
+  ApiName:
+    Type: String
+    Default: prod-api-gateway
+
+Resources:
+
+  # ── Artifact bucket ──────────────────────────────────────────────────────
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "${AWS::AccountId}-prod-pipeline-artifacts"
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldArtifacts
+            Status: Enabled
+            ExpirationInDays: 90
+
+  # ── SNS Topic for Notifications (provision for future use) ──────────────
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: prod-pipeline-notifications
+      DisplayName: Production Pipeline Notifications
+      Tags:
+        - Key: Environment
+          Value: prod
+
+  # ── SNS Topic for Manual Approval Notifications ─────────────────────────
+  ApprovalNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: prod-pipeline-approval-required
+      DisplayName: Production Pipeline - Approval Required
+      Tags:
+        - Key: Environment
+          Value: prod
+
+  # ── SSM Parameters ───────────────────────────────────────────────────────
+  SSMEnvironment:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /pipeline/prod/environment
+      Type: String
+      Value: prod
+
+  SSMArtifactBucket:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /pipeline/prod/artifact_bucket
+      Type: String
+      Value: !Ref ArtifactBucket
+
+  SSMApiStageName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /pipeline/prod/stage_name
+      Type: String
+      Value: !Ref ApiStageName
+
+  SSMApiName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /pipeline/prod/api_name
+      Type: String
+      Value: !Ref ApiName
+
+  SSMNotificationTopic:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /pipeline/prod/notification_topic
+      Type: String
+      Value: !Ref NotificationTopic
+      Description: SNS topic for pipeline notifications (reserved for future use)
+
+  SSMApprovalTopic:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /pipeline/prod/approval_topic
+      Type: String
+      Value: !Ref ApprovalNotificationTopic
+      Description: SNS topic for manual approval notifications
+
+  # ── IAM: CodeBuild ───────────────────────────────────────────────────────
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: prod-codebuild-deploy-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: Logs
+                Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
+
+              - Sid: Artifacts
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:GetBucketVersioning]
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub "${ArtifactBucket.Arn}/*"
+
+              - Sid: CloudFormation
+                Effect: Allow
+                Action:
+                  - cloudformation:ValidateTemplate
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:GetTemplate
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DescribeChangeSet
+                Resource: "*"
+
+              - Sid: IAMPassthrough
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRole
+                  - iam:PassRole
+                  - iam:TagRole
+                Resource: "*"
+
+              - Sid: AllAWSServices
+                Effect: Allow
+                Action:
+                  - lambda:*
+                  - apigateway:*
+                  - elasticloadbalancing:*
+                  - ecs:*
+                  - ec2:Describe*
+                  - ec2:CreateSecurityGroup
+                  - ec2:AuthorizeSecurityGroupIngress
+                Resource: "*"
+
+              - Sid: SSM
+                Effect: Allow
+                Action: [ssm:GetParameter, ssm:GetParameters]
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/pipeline/prod/*"
+
+  # ── CodeBuild: Deploy Project ────────────────────────────────────────────
+  CodeBuildDeployProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: prod-infra-deploy
+      Description: Detects changed modules and deploys them to production environment
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - Name: ENVIRONMENT
+            Value: prod
+          - Name: ARTIFACT_BUCKET
+            Value: !Ref ArtifactBucket
+          - Name: DEPLOY_MODULES
+            Value: ""
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: pipeline/buildspec-deploy.yml
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: /aws/codebuild/prod-infra-deploy
+      Tags:
+        - Key: Environment
+          Value: prod
+
+  # ── CodeBuild: API Test Project ──────────────────────────────────────────
+  CodeBuildApiTestProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: prod-api-tests
+      Description: Runs automated API tests after deployment
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - Name: ENVIRONMENT
+            Value: prod
+          - Name: API_ENDPOINT
+            Value: ""
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: pipeline/buildspec-api-tests.yml
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: /aws/codebuild/prod-api-tests
+      Tags:
+        - Key: Environment
+          Value: prod
+
+  # ── CodeBuild: Integration Test Project ──────────────────────────────────
+  CodeBuildIntegrationTestProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: prod-integration-tests
+      Description: Runs integration tests after deployment
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - Name: ENVIRONMENT
+            Value: prod
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: pipeline/buildspec-integration-tests.yml
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: /aws/codebuild/prod-integration-tests
+      Tags:
+        - Key: Environment
+          Value: prod
+
+  # ── CodeBuild: Load Test Project ─────────────────────────────────────────
+  CodeBuildLoadTestProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: prod-load-tests
+      Description: Runs load tests after deployment
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - Name: ENVIRONMENT
+            Value: prod
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: pipeline/buildspec-load-tests.yml
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: /aws/codebuild/prod-load-tests
+      Tags:
+        - Key: Environment
+          Value: prod
+
+  # ── IAM: CodePipeline ────────────────────────────────────────────────────
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: prod-codepipeline-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodePipelinePermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:GetBucketVersioning]
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub "${ArtifactBucket.Arn}/*"
+              - Effect: Allow
+                Action: [codebuild:BatchGetBuilds, codebuild:StartBuild]
+                Resource:
+                  - !GetAtt CodeBuildDeployProject.Arn
+                  - !GetAtt CodeBuildApiTestProject.Arn
+                  - !GetAtt CodeBuildIntegrationTestProject.Arn
+                  - !GetAtt CodeBuildLoadTestProject.Arn
+              - Effect: Allow
+                Action:
+                  - codestar-connections:UseConnection
+                  - codeconnections:UseConnection
+                Resource: !Ref GitHubConnectionArn
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref ApprovalNotificationTopic
+
+  # ── IAM: EventBridge → CodePipeline ─────────────────────────────────────
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: prod-eventbridge-pipeline-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartPipelineExecution
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: codepipeline:StartPipelineExecution
+                Resource: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:prod-infra-pipeline"
+
+  # ── EventBridge rule: GitHub push → trigger pipeline ────────────────────
+  PipelineTriggerRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: prod-infra-pipeline-trigger
+      Description: Triggers production pipeline on push to main branch
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.codeconnections
+        detail-type:
+          - CodeConnections Repository State Change
+        detail:
+          event:
+            - referenceUpdated
+            - referenceCreated
+          referenceName:
+            - !Ref GitHubBranch
+          referenceType:
+            - branch
+          repositoryName:
+            - !Ref GitHubRepo
+      Targets:
+        - Id: TriggerPipeline
+          Arn: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:prod-infra-pipeline"
+          RoleArn: !GetAtt EventBridgeRole.Arn
+
+  # ── CodePipeline ─────────────────────────────────────────────────────────
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: prod-infra-pipeline
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+
+        - Name: Source
+          Actions:
+            - Name: GitHubSource
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: '1'
+              Configuration:
+                ConnectionArn: !Ref GitHubConnectionArn
+                FullRepositoryId: !Sub "${GitHubOwner}/${GitHubRepo}"
+                BranchName: !Ref GitHubBranch
+                OutputArtifactFormat: CODE_ZIP
+                DetectChanges: true
+              OutputArtifacts:
+                - Name: SourceArtifact
+
+        - Name: ManualApproval
+          Actions:
+            - Name: ApproveDeployment
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: '1'
+              Configuration:
+                NotificationArn: !Ref ApprovalNotificationTopic
+                CustomData: !Sub |
+                  Please review the changes and approve deployment to PRODUCTION environment.
+                  
+                  Pipeline: ${AWS::StackName}
+                  Branch: ${GitHubBranch}
+                  Region: ${AWS::Region}
+                  
+                  Review the changes in GitHub before approving.
+              RunOrder: 1
+
+        - Name: Deploy
+          Actions:
+            - Name: DeployChangedModules
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref CodeBuildDeployProject
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: DeployArtifact
+
+        - Name: Test
+          Actions:
+            - Name: ApiTests
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref CodeBuildApiTestProject
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: ApiTestArtifact
+              RunOrder: 1
+
+            - Name: IntegrationTests
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref CodeBuildIntegrationTestProject
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: IntegrationTestArtifact
+              RunOrder: 2
+
+            - Name: LoadTests
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref CodeBuildLoadTestProject
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: LoadTestArtifact
+              RunOrder: 3
+
+      Tags:
+        - Key: Environment
+          Value: prod
+
+  # ── CloudWatch alarm on pipeline failure ─────────────────────────────────
+  PipelineFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: prod-infra-pipeline-failure
+      AlarmDescription: Fires when production pipeline execution fails
+      Namespace: AWS/CodePipeline
+      MetricName: FailedPipelines
+      Dimensions:
+        - Name: PipelineName
+          Value: !Ref Pipeline
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  PipelineName:
+    Value: !Ref Pipeline
+    Export:
+      Name: prod-PipelineName
+
+  PipelineConsoleUrl:
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/codesuite/codepipeline/pipelines/${Pipeline}/view"
+
+  ArtifactBucket:
+    Value: !Ref ArtifactBucket
+    Export:
+      Name: prod-PipelineArtifactBucket
+
+  NotificationTopicArn:
+    Value: !Ref NotificationTopic
+    Export:
+      Name: prod-NotificationTopicArn
+    Description: SNS topic for pipeline notifications (reserved for future use)
+
+  ApprovalTopicArn:
+    Value: !Ref ApprovalNotificationTopic
+    Export:
+      Name: prod-ApprovalTopicArn
+    Description: SNS topic for manual approval notifications
+
+# Made with Bob

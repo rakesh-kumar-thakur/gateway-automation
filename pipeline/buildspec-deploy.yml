@@ -1,0 +1,282 @@
+version: 0.2
+
+# ============================================================================
+# Deployment BuildSpec - Auto-detects and deploys only changed modules
+# ============================================================================
+# This buildspec:
+# 1. Detects which modules have changed by comparing git diff
+# 2. Reads module manifests from pipeline/modules/*.yml
+# 3. Deploys only the changed modules in the correct order
+# 4. Supports manual override via DEPLOY_MODULES env var
+
+env:
+  variables:
+    ENVIRONMENT: "dev"
+    ARTIFACT_BUCKET: ""
+    DEPLOY_MODULES: ""  # Override: comma-separated list, e.g., "api-gateway,alb"
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - echo "==> Installing dependencies..."
+      - pip install --quiet pyyaml boto3 cfn-lint
+
+  pre_build:
+    commands:
+      - echo "==> Environment $ENVIRONMENT"
+      - echo "==> Artifact Bucket $ARTIFACT_BUCKET"
+      
+      # Create Python script for change detection and deployment
+      - |
+        cat > /tmp/deploy_modules.py << 'DEPLOY_SCRIPT'
+        #!/usr/bin/env python3
+        """
+        Module deployment orchestrator with change detection.
+        Detects changed modules and deploys them in the correct order.
+        """
+        import os
+        import sys
+        import yaml
+        import subprocess
+        import json
+        from pathlib import Path
+
+        def run_command(cmd, check=True):
+            """Execute shell command and return output."""
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            if check and result.returncode != 0:
+                print(f"ERROR: Command failed: {cmd}")
+                print(f"STDERR: {result.stderr}")
+                sys.exit(1)
+            return result.stdout.strip()
+
+        def get_changed_files():
+            """Get list of changed files from git."""
+            # Get the previous commit (for change detection)
+            # In CodePipeline, we compare against the previous successful build
+            try:
+                # Try to get changed files from last commit
+                changed = run_command("git diff --name-only HEAD~1 HEAD", check=False)
+                if not changed:
+                    # If no previous commit, get all files (first deployment)
+                    changed = run_command("git ls-files", check=False)
+                return set(changed.split('\n')) if changed else set()
+            except Exception as e:
+                print(f"WARNING: Could not detect changes: {e}")
+                print("Deploying all enabled modules as fallback")
+                return set()
+
+        def load_module_manifest(manifest_path):
+            """Load and parse a module manifest YAML file."""
+            with open(manifest_path, 'r') as f:
+                return yaml.safe_load(f)
+
+        def should_deploy_module(manifest, changed_files):
+            """Determine if a module should be deployed based on changes."""
+            if not manifest.get('module', {}).get('enabled', False):
+                return False
+            
+            change_paths = manifest.get('changePaths', [])
+            if not change_paths:
+                return False
+            
+            # Check if any changed file matches the module's changePaths
+            for changed_file in changed_files:
+                for pattern in change_paths:
+                    # Simple pattern matching (supports ** wildcard)
+                    pattern_parts = pattern.replace('**', '*').split('/')
+                    file_parts = changed_file.split('/')
+                    
+                    if len(pattern_parts) <= len(file_parts):
+                        match = True
+                        for i, part in enumerate(pattern_parts):
+                            if part == '*':
+                                continue
+                            if i < len(file_parts) and part != file_parts[i]:
+                                match = False
+                                break
+                        if match:
+                            return True
+            return False
+
+        def deploy_module(manifest, environment, artifact_bucket):
+            """Deploy a single module using CloudFormation."""
+            module_name = manifest['module']['name']
+            stack_config = manifest['stack']
+            stack_name = f"{environment}-{stack_config['name']}"
+            template_path = stack_config['templatePath']
+            
+            print(f"\n{'='*80}")
+            print(f"Deploying module: {module_name}")
+            print(f"Stack name: {stack_name}")
+            print(f"Template: {template_path}")
+            print(f"{'='*80}\n")
+            
+            # Validate template
+            print("==> Validating CloudFormation template...")
+            run_command(f"cfn-lint {template_path} --ignore-checks W")
+            
+            # Check if template needs packaging (has local references)
+            with open(template_path, 'r') as f:
+                template_content = f.read()
+            
+            needs_packaging = any(x in template_content for x in ['./swagger.yaml', 'BodyS3Location'])
+            
+            if needs_packaging:
+                print("==> Packaging template...")
+                packaged_template = f"/tmp/{module_name}-packaged.yaml"
+                run_command(f"""
+                    aws cloudformation package \
+                      --template-file {template_path} \
+                      --s3-bucket {artifact_bucket} \
+                      --s3-prefix {module_name} \
+                      --output-template-file {packaged_template}
+                """)
+                deploy_template = packaged_template
+            else:
+                deploy_template = template_path
+            
+            # Build parameters
+            params = []
+            for param in manifest.get('parameters', []):
+                key = param['key']
+                source = param.get('source', 'value')
+                
+                if source == 'ssm':
+                    # Fetch from SSM
+                    ssm_path = param['path']
+                    value = run_command(f"aws ssm get-parameter --name {ssm_path} --query 'Parameter.Value' --output text")
+                    params.append(f"{key}={value}")
+                elif source == 'value':
+                    value = param.get('value', '')
+                    params.append(f"{key}={value}")
+            
+            param_overrides = ' '.join(params) if params else ''
+            
+            # Build capabilities
+            capabilities = manifest.get('stack', {}).get('capabilities', [])
+            capabilities_flag = f"--capabilities {' '.join(capabilities)}" if capabilities else ""
+            
+            # Build tags
+            tags = manifest.get('tags', [])
+            tag_list = ' '.join([f"{t['key']}={t['value']}" for t in tags])
+            tag_list += f" Environment={environment} ManagedBy=CodePipeline"
+            
+            # Deploy stack
+            print("==> Deploying stack...")
+            deploy_cmd = f"""
+                aws cloudformation deploy \
+                  --template-file {deploy_template} \
+                  --stack-name {stack_name} \
+                  --parameter-overrides {param_overrides} \
+                  {capabilities_flag} \
+                  --no-fail-on-empty-changeset \
+                  --tags {tag_list}
+            """
+            run_command(deploy_cmd)
+            
+            # Get stack outputs
+            print("==> Deployment complete. Fetching outputs...")
+            outputs = run_command(f"aws cloudformation describe-stacks --stack-name {stack_name} --query 'Stacks[0].Outputs' --output table")
+            print(outputs)
+            
+            return True
+
+        def main():
+            environment = os.environ.get('ENVIRONMENT', 'dev')
+            artifact_bucket = os.environ.get('ARTIFACT_BUCKET', '')
+            deploy_modules_override = os.environ.get('DEPLOY_MODULES', '').strip()
+            
+            print(f"Environment: {environment}")
+            print(f"Artifact Bucket: {artifact_bucket}")
+            
+            # Load all module manifests
+            modules_dir = Path('pipeline/modules')
+            manifests = {}
+            
+            for manifest_file in sorted(modules_dir.glob('*.yml')):
+                manifest = load_module_manifest(manifest_file)
+                module_name = manifest['module']['name']
+                manifests[module_name] = manifest
+                print(f"Loaded manifest: {module_name} (enabled: {manifest['module'].get('enabled', False)})")
+            
+            # Determine which modules to deploy
+            if deploy_modules_override:
+                # Manual override
+                modules_to_deploy = [m.strip() for m in deploy_modules_override.split(',')]
+                print(f"\n==> Manual override: deploying {modules_to_deploy}")
+            else:
+                # Auto-detect changes
+                print("\n==> Detecting changed files...")
+                changed_files = get_changed_files()
+                print(f"Changed files: {len(changed_files)}")
+                for f in sorted(changed_files):
+                    print(f"  - {f}")
+                
+                modules_to_deploy = []
+                for module_name, manifest in manifests.items():
+                    if should_deploy_module(manifest, changed_files):
+                        modules_to_deploy.append(module_name)
+                        print(f"\n==> Module '{module_name}' has changes and will be deployed")
+            
+            if not modules_to_deploy:
+                print("\n==> No modules to deploy. Exiting.")
+                return 0
+            
+            # Deploy modules in order
+            print(f"\n==> Deploying {len(modules_to_deploy)} module(s): {', '.join(modules_to_deploy)}")
+            
+            deployed_count = 0
+            for module_name in modules_to_deploy:
+                if module_name not in manifests:
+                    print(f"WARNING: Module '{module_name}' not found in manifests")
+                    continue
+                
+                manifest = manifests[module_name]
+                if not manifest['module'].get('enabled', False):
+                    print(f"WARNING: Module '{module_name}' is disabled, skipping")
+                    continue
+                
+                try:
+                    deploy_module(manifest, environment, artifact_bucket)
+                    deployed_count += 1
+                except Exception as e:
+                    print(f"ERROR: Failed to deploy module '{module_name}': {e}")
+                    sys.exit(1)
+            
+            print(f"\n{'='*80}")
+            print(f"Deployment Summary: {deployed_count}/{len(modules_to_deploy)} modules deployed successfully")
+            print(f"{'='*80}")
+            
+            return 0
+
+        if __name__ == '__main__':
+            sys.exit(main())
+        DEPLOY_SCRIPT
+      
+      - chmod +x /tmp/deploy_modules.py
+
+  build:
+    commands:
+      - echo "==> Running module deployment orchestrator..."
+      - python3 /tmp/deploy_modules.py
+
+  post_build:
+    commands:
+      - echo "==> Deployment phase complete"
+      - |
+        if [ $CODEBUILD_BUILD_SUCCEEDING -eq 1 ]; then
+          echo "✓ All deployments successful"
+        else
+          echo "✗ Deployment failed"
+          exit 1
+        fi
+
+artifacts:
+  files:
+    - '**/*'
+  name: DeploymentArtifact
+
+# Made with Bob

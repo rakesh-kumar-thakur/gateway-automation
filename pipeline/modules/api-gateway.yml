@@ -1,6 +1,5 @@
 # ============================================================
 # API Gateway Module Manifest
-# Informational only - buildspec.yml handles the actual deploy.
 # ============================================================
 
 module:
@@ -11,8 +10,31 @@ module:
 stack:
   name: api-gateway-stack
   templatePath: aws/api-gateway/template.yaml
+  capabilities:
+    - CAPABILITY_NAMED_IAM
 
-# To add a new endpoint:
-#   1. Edit aws/api-gateway/swagger.yaml
-#   2. Push to master
-#   3. Pipeline auto-triggers and deploys
+preDeploy: ~
+
+parameters:
+  - key: Environment
+    source: ssm
+    path: /pipeline/{env}/environment
+  - key: StageName
+    source: ssm
+    path: /pipeline/{env}/stage_name
+  - key: ApiName
+    source: ssm
+    path: /pipeline/{env}/api_name
+
+tags:
+  - key: ManagedBy
+    value: CodePipeline
+  - key: Module
+    value: api-gateway
+
+# Pipeline auto-triggers when these paths change
+changePaths:
+  - aws/api-gateway/**
+  - pipeline/modules/api-gateway.yml
+
+# Made with Bob
