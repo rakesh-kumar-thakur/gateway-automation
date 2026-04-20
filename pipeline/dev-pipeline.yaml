@@ -133,6 +133,7 @@ Resources:
                 Effect: Allow
                 Action:
                   - cloudformation:ValidateTemplate
+                  - cloudformation:GetTemplateSummary
                   - cloudformation:CreateStack
                   - cloudformation:UpdateStack
                   - cloudformation:DescribeStacks
