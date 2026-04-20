@@ -256,7 +256,7 @@ Resources:
                 FullRepositoryId: !Sub "${GitHubOwner}/${GitHubRepo}"
                 BranchName: !Ref GitHubBranch
                 OutputArtifactFormat: CODE_ZIP
-                DetectChanges: true
+                DetectChanges: false
               OutputArtifacts:
                 - Name: SourceArtifact
 
