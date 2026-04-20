@@ -324,6 +324,53 @@ Resources:
                   - codeconnections:UseConnection
                 Resource: !Ref GitHubConnectionArn
 
+  # ── IAM: EventBridge → CodePipeline ─────────────────────────────────────
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: dev-eventbridge-pipeline-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartPipelineExecution
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: codepipeline:StartPipelineExecution
+                Resource: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${Pipeline}"
+
+  # ── EventBridge rule: GitHub push → trigger pipeline ────────────────────
+  PipelineTriggerRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: dev-infra-pipeline-trigger
+      Description: Triggers dev pipeline on push to develop branch
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.codeconnections
+        detail-type:
+          - CodeConnections Source Action State Change
+        resources:
+          - !Ref GitHubConnectionArn
+        detail:
+          state:
+            - SUCCEEDED
+          fullRepositoryName:
+            - !Sub "${GitHubOwner}/${GitHubRepo}"
+          referenceName:
+            - !Ref GitHubBranch
+      Targets:
+        - Id: TriggerPipeline
+          Arn: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${Pipeline}"
+          RoleArn: !GetAtt EventBridgeRole.Arn
+
   # ── CodePipeline ─────────────────────────────────────────────────────────
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
