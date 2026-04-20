@@ -35,7 +35,7 @@ paths:
         uri:
           Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaHello.Arn}/invocations"
         passthroughBehavior: when_no_match
-  /rakesh:
+  /my-api-test:
     get:
       summary: Hello endpoint
       operationId: getHello
