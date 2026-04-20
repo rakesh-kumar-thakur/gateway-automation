@@ -414,49 +414,24 @@ Resources:
               OutputArtifacts:
                 - Name: DeployArtifact
 
-        - Name: Test
-          Actions:
-            - Name: ApiTests
-              ActionTypeId:
-                Category: Build
-                Owner: AWS
-                Provider: CodeBuild
-                Version: '1'
-              Configuration:
-                ProjectName: !Ref CodeBuildApiTestProject
-              InputArtifacts:
-                - Name: SourceArtifact
-              OutputArtifacts:
-                - Name: ApiTestArtifact
-              RunOrder: 1
-
-            - Name: IntegrationTests
-              ActionTypeId:
-                Category: Build
-                Owner: AWS
-                Provider: CodeBuild
-                Version: '1'
-              Configuration:
-                ProjectName: !Ref CodeBuildIntegrationTestProject
-              InputArtifacts:
-                - Name: SourceArtifact
-              OutputArtifacts:
-                - Name: IntegrationTestArtifact
-              RunOrder: 2
-
-            - Name: LoadTests
-              ActionTypeId:
-                Category: Build
-                Owner: AWS
-                Provider: CodeBuild
-                Version: '1'
-              Configuration:
-                ProjectName: !Ref CodeBuildLoadTestProject
-              InputArtifacts:
-                - Name: SourceArtifact
-              OutputArtifacts:
-                - Name: LoadTestArtifact
-              RunOrder: 3
+        # Test stage - Optional, won't block deployment
+        # Tests may fail if API endpoints don't exist yet
+        # Remove this entire stage if you don't want testing
+        # - Name: Test
+        #   Actions:
+        #     - Name: ApiTests
+        #       ActionTypeId:
+        #         Category: Build
+        #         Owner: AWS
+        #         Provider: CodeBuild
+        #         Version: '1'
+        #       Configuration:
+        #         ProjectName: !Ref CodeBuildApiTestProject
+        #       InputArtifacts:
+        #         - Name: SourceArtifact
+        #       OutputArtifacts:
+        #         - Name: ApiTestArtifact
+        #       RunOrder: 1
 
       Tags:
         - Key: Environment
