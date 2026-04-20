@@ -4,6 +4,8 @@ info:
   description: "REST API - add endpoints here, pipeline deploys automatically"
   version: "1.0"
 
+# Test auto-trigger: Modified at 2026-04-20
+
 # ============================================================
 # To add a new endpoint:
 #   1. Add a new path block below following the same pattern
@@ -32,7 +34,27 @@ paths:
         httpMethod: POST
         uri:
           Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaHello.Arn}/invocations"
-        passthroughBehavior: when_no_match  
+        passthroughBehavior: when_no_match
+  /rakesh:
+    get:
+      summary: Hello endpoint
+      operationId: getHello
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+      x-amazon-apigateway-integration:
+        type: aws_proxy
+        httpMethod: POST
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaHello.Arn}/invocations"
+        passthroughBehavior: when_no_match       
   /new-end-points:
     get:
       summary: Hello endpoint added for chagne
@@ -52,32 +74,4 @@ paths:
         httpMethod: POST
         uri:
           Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaHello.Arn}/invocations"
-        passthroughBehavior: when_no_match      
-  /test-files:
-    post:
-      summary: Data endpoint
-      operationId: postData
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-      responses:
-        "200":
-          description: Successful response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  received:
-                    type: object
-                  status:
-                    type: string
-      x-amazon-apigateway-integration:
-        type: aws_proxy
-        httpMethod: POST
-        uri:
-          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaData.Arn}/invocations"
         passthroughBehavior: when_no_match
