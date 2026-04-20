@@ -4,7 +4,7 @@ info:
   description: "REST API - add endpoints here, pipeline deploys automatically"
   version: "1.0"
 
-# Test auto-trigger: Modified at 2026-04-20 16:22 IST - Testing scheduled Lambda polling
+# Test auto-trigger: Modified at 2026-04-20 16:29 IST - Final verification of auto-trigger
 
 # ============================================================
 # To add a new endpoint:
@@ -35,7 +35,7 @@ paths:
         uri:
           Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaHello.Arn}/invocations"
         passthroughBehavior: when_no_match
-  /my-api-test2:
+  /mahadev-api:
     get:
       summary: Hello endpoint
       operationId: getHello
