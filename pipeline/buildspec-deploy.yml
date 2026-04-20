@@ -54,19 +54,10 @@ phases:
 
         def get_changed_files():
             """Get list of changed files from git."""
-            # Get the previous commit (for change detection)
-            # In CodePipeline, we compare against the previous successful build
-            try:
-                # Try to get changed files from last commit
-                changed = run_command("git diff --name-only HEAD~1 HEAD", check=False)
-                if not changed:
-                    # If no previous commit, get all files (first deployment)
-                    changed = run_command("git ls-files", check=False)
-                return set(changed.split('\n')) if changed else set()
-            except Exception as e:
-                print(f"WARNING: Could not detect changes: {e}")
-                print("Deploying all enabled modules as fallback")
-                return set()
+            # CodeBuild doesn't preserve git history, so we deploy all enabled modules
+            # This ensures modules always deploy when enabled
+            print("NOTE: Deploying all enabled modules (CodeBuild limitation)")
+            return None  # Return None to trigger deployment of all enabled modules
 
         def load_module_manifest(manifest_path):
             """Load and parse a module manifest YAML file."""
@@ -208,18 +199,13 @@ phases:
                 modules_to_deploy = [m.strip() for m in deploy_modules_override.split(',')]
                 print(f"\n==> Manual override: deploying {modules_to_deploy}")
             else:
-                # Auto-detect changes
-                print("\n==> Detecting changed files...")
-                changed_files = get_changed_files()
-                print(f"Changed files: {len(changed_files)}")
-                for f in sorted(changed_files):
-                    print(f"  - {f}")
-                
+                # Deploy all enabled modules (CodeBuild doesn't preserve git history)
+                print("\n==> Deploying all enabled modules...")
                 modules_to_deploy = []
                 for module_name, manifest in manifests.items():
-                    if should_deploy_module(manifest, changed_files):
+                    if manifest.get('module', {}).get('enabled', False):
                         modules_to_deploy.append(module_name)
-                        print(f"\n==> Module '{module_name}' has changes and will be deployed")
+                        print(f"==> Module '{module_name}' is enabled and will be deployed")
             
             if not modules_to_deploy:
                 print("\n==> No modules to deploy. Exiting.")
