@@ -113,18 +113,36 @@ phases:
             with open(template_path, 'r') as f:
                 template_content = f.read()
             
-            needs_packaging = any(x in template_content for x in ['./swagger.yaml', 'BodyS3Location'])
+            needs_packaging = any(x in template_content for x in ['swagger.yaml', 'BodyS3Location', 'AWS::Include'])
             
             if needs_packaging:
                 print("==> Packaging template...")
                 packaged_template = f"/tmp/{module_name}-packaged.yaml"
-                run_command(f"""
-                    aws cloudformation package \
-                      --template-file {template_path} \
-                      --s3-bucket {artifact_bucket} \
-                      --s3-prefix {module_name} \
-                      --output-template-file {packaged_template}
-                """)
+                
+                # Get the directory containing the template for relative path resolution
+                import os
+                template_dir = os.path.dirname(template_path)
+                template_file = os.path.basename(template_path)
+                
+                # Change to template directory to resolve relative paths like swagger.yaml
+                original_dir = os.getcwd()
+                if template_dir:
+                    os.chdir(template_dir)
+                    template_for_package = template_file
+                else:
+                    template_for_package = template_path
+                
+                try:
+                    run_command(f"""
+                        aws cloudformation package \
+                          --template-file {template_for_package} \
+                          --s3-bucket {artifact_bucket} \
+                          --s3-prefix {module_name} \
+                          --output-template-file {packaged_template}
+                    """)
+                finally:
+                    os.chdir(original_dir)
+                
                 deploy_template = packaged_template
             else:
                 deploy_template = template_path
